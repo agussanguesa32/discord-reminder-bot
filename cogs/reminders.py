@@ -7,7 +7,7 @@ import pytz
 
 import database as db
 import scheduler as sched
-from utils import format_repeat, format_next_run, next_run_utc, discord_ts, COMMON_TIMEZONES
+from utils import format_repeat, format_next_run, format_advance_notice, next_run_utc, discord_ts, COMMON_TIMEZONES
 from views.reminder_views import QuickTimeView, ReminderListView, DeleteReminderView
 
 logger = logging.getLogger(__name__)
@@ -168,7 +168,7 @@ def _build_list_embed(reminders, user) -> discord.Embed:
     for r in reminders[:10]:
         dt = next_run_utc(r)
         repeat_str = format_repeat(r)
-        advance_str = f" · {r['advance_notice']} min notice" if r["advance_notice"] else ""
+        advance_str = f" · {format_advance_notice(r['advance_notice'])}" if r["advance_notice"] else ""
         embed.add_field(
             name=f"#{r['id']} — {r['title']}",
             value=f"📅 {discord_ts(dt, 'f')} ({discord_ts(dt, 'R')})\n🔁 {repeat_str}{advance_str}",

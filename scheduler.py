@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 import discord
 import pytz
-from utils import discord_ts
+from utils import discord_ts, format_advance_notice
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 
@@ -138,7 +138,7 @@ async def _fire_reminder(reminder_id: int, is_advance: bool = False):
         )
         if reminder["description"]:
             embed.add_field(name="Description", value=reminder["description"], inline=False)
-        embed.set_footer(text=f"{reminder['advance_notice']} min advance notice · ID #{reminder_id}")
+        embed.set_footer(text=f"{format_advance_notice(reminder['advance_notice'])} advance notice · ID #{reminder_id}")
     else:
         missed = next_run_utc < now_utc - timedelta(seconds=30)
         embed = discord.Embed(

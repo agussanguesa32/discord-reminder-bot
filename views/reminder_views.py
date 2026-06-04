@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import discord
 from discord.ui import Modal, TextInput, View, Button, Select
@@ -9,8 +9,8 @@ import database as db
 import scheduler as sched
 from utils import (
     parse_date, build_datetime, preset_dt,
-    format_repeat, format_next_run, next_run_utc,
-    discord_ts, UNIT_LABELS, DAY_LABELS, DEFAULT_TZ,
+    format_advance_notice, format_repeat, format_next_run,
+    next_run_utc, discord_ts, UNIT_LABELS, DAY_LABELS, DEFAULT_TZ,
 )
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,21 @@ HOUR_OPTIONS = [
 MINUTE_OPTIONS = [
     discord.SelectOption(label=f":{m:02d}", value=str(m))
     for m in range(0, 60, 5)
+]
+
+ADVANCE_DAY_OPTIONS = [
+    discord.SelectOption(label="0 days", value="0", default=True),
+    *[discord.SelectOption(label=f"{d} day{'s' if d > 1 else ''}", value=str(d)) for d in range(1, 8)]
+]
+
+ADVANCE_HOUR_OPTIONS = [
+    discord.SelectOption(label="0 hours", value="0", default=True),
+    *[discord.SelectOption(label=f"{h} hour{'s' if h > 1 else ''}", value=str(h)) for h in range(1, 24)]
+]
+
+ADVANCE_MINUTE_OPTIONS = [
+    discord.SelectOption(label="0 min", value="0", default=True),
+    *[discord.SelectOption(label=f"{m} min", value=str(m)) for m in range(5, 60, 5)]
 ]
 
 
@@ -40,12 +55,9 @@ async def _safe_respond(interaction: discord.Interaction, **kwargs):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 1 — Quick time picker
-# Shows preset buttons + a "Custom date" option.
 # ─────────────────────────────────────────────────────────────────────────────
 
 class QuickTimeView(View):
-    """First step: choose a preset time or go custom."""
-
     def __init__(self, user_timezone: str, user_id: int):
         super().__init__(timeout=180)
         self.user_timezone = user_timezone
@@ -65,40 +77,37 @@ class QuickTimeView(View):
         except discord.HTTPException as e:
             logger.error("Failed to send ReminderDetailsModal for user %s: %s", self.user_id, e)
 
-    @discord.ui.button(label="In 30 min",     style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="In 30 min",          style=discord.ButtonStyle.secondary, row=0)
     async def in_30m(self, interaction: discord.Interaction, button: Button):
         await self._open_details_modal(interaction, preset_dt(self.user_timezone, 0, *_time_ahead(self.user_timezone, 30)))
 
-    @discord.ui.button(label="In 1 hour",     style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="In 1 hour",           style=discord.ButtonStyle.secondary, row=0)
     async def in_1h(self, interaction: discord.Interaction, button: Button):
         await self._open_details_modal(interaction, preset_dt(self.user_timezone, 0, *_time_ahead(self.user_timezone, 60)))
 
-    @discord.ui.button(label="In 2 hours",    style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="In 2 hours",          style=discord.ButtonStyle.secondary, row=0)
     async def in_2h(self, interaction: discord.Interaction, button: Button):
         await self._open_details_modal(interaction, preset_dt(self.user_timezone, 0, *_time_ahead(self.user_timezone, 120)))
 
-    @discord.ui.button(label="In 4 hours",    style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="In 4 hours",          style=discord.ButtonStyle.secondary, row=0)
     async def in_4h(self, interaction: discord.Interaction, button: Button):
         await self._open_details_modal(interaction, preset_dt(self.user_timezone, 0, *_time_ahead(self.user_timezone, 240)))
 
-    @discord.ui.button(label="Tomorrow 9am",  style=discord.ButtonStyle.primary,   row=1)
+    @discord.ui.button(label="Tomorrow 9am",        style=discord.ButtonStyle.primary,   row=1)
     async def tmr_9(self, interaction: discord.Interaction, button: Button):
         await self._open_details_modal(interaction, preset_dt(self.user_timezone, 1, 9, 0))
 
-    @discord.ui.button(label="Tomorrow 12pm", style=discord.ButtonStyle.primary,   row=1)
+    @discord.ui.button(label="Tomorrow 12pm",       style=discord.ButtonStyle.primary,   row=1)
     async def tmr_12(self, interaction: discord.Interaction, button: Button):
         await self._open_details_modal(interaction, preset_dt(self.user_timezone, 1, 12, 0))
 
-    @discord.ui.button(label="Tomorrow 6pm",  style=discord.ButtonStyle.primary,   row=1)
+    @discord.ui.button(label="Tomorrow 6pm",        style=discord.ButtonStyle.primary,   row=1)
     async def tmr_18(self, interaction: discord.Interaction, button: Button):
         await self._open_details_modal(interaction, preset_dt(self.user_timezone, 1, 18, 0))
 
     @discord.ui.button(label="📅 Custom date & time", style=discord.ButtonStyle.success, row=2)
     async def custom(self, interaction: discord.Interaction, button: Button):
-        modal = CustomDateModal(
-            user_timezone=self.user_timezone,
-            user_id=self.user_id,
-        )
+        modal = CustomDateModal(user_timezone=self.user_timezone, user_id=self.user_id)
         try:
             await interaction.response.send_modal(modal)
         except discord.HTTPException as e:
@@ -106,15 +115,13 @@ class QuickTimeView(View):
 
 
 def _time_ahead(timezone: str, minutes: int):
-    """Return (hour, minute) of now + N minutes in the user's timezone."""
     tz = pytz.timezone(timezone)
-    from datetime import timedelta
     target = datetime.now(tz) + timedelta(minutes=minutes)
     return target.hour, target.minute
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 2a — Details modal for quick presets (no date/time fields)
+# Step 2a — Details modal for quick presets (Title + Description only)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ReminderDetailsModal(Modal, title="➕ Reminder details"):
@@ -130,12 +137,6 @@ class ReminderDetailsModal(Modal, title="➕ Reminder details"):
         style=discord.TextStyle.paragraph,
         max_length=500,
     )
-    advance_notice = TextInput(
-        label="Advance notice in minutes (0 = none)",
-        placeholder="e.g. 30",
-        default="0",
-        max_length=4,
-    )
 
     def __init__(self, prefilled_dt: datetime, user_timezone: str, user_id: int):
         super().__init__()
@@ -144,18 +145,6 @@ class ReminderDetailsModal(Modal, title="➕ Reminder details"):
         self.user_id = user_id
 
     async def on_submit(self, interaction: discord.Interaction):
-        try:
-            advance = int(self.advance_notice.value.strip() or "0")
-            if advance < 0:
-                raise ValueError
-        except ValueError:
-            await _safe_respond(
-                interaction,
-                content="❌ Advance notice must be a non-negative number of minutes.",
-                ephemeral=True,
-            )
-            return
-
         now_utc = datetime.now(pytz.utc)
         if self.prefilled_dt <= now_utc:
             await _safe_respond(
@@ -165,23 +154,14 @@ class ReminderDetailsModal(Modal, title="➕ Reminder details"):
             )
             return
 
-        view = RepeatConfigView(
+        view = AdvanceNoticeView(
             r_title=self.r_title.value,
             description=self.description.value,
             next_run=self.prefilled_dt,
-            advance=advance,
             user_timezone=self.user_timezone,
             user_id=self.user_id,
         )
-        embed = discord.Embed(
-            title="⚙️ Set repeat schedule",
-            description=(
-                f"**{self.r_title.value}**\n"
-                f"📅 {discord_ts(self.prefilled_dt, 'f')}  ·  {discord_ts(self.prefilled_dt, 'R')}\n\n"
-                "How often should this reminder repeat?"
-            ),
-            color=discord.Color.blurple(),
-        )
+        embed = _advance_notice_embed(self.r_title.value, self.prefilled_dt)
         await _safe_respond(interaction, embed=embed, view=view, ephemeral=True)
 
     async def on_error(self, interaction: discord.Interaction, error: Exception):
@@ -190,10 +170,10 @@ class ReminderDetailsModal(Modal, title="➕ Reminder details"):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 2b — Custom date modal (title + description + date + advance notice)
+# Step 2b — Custom date modal (Title + Description + Date — 3 fields)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class CustomDateModal(Modal, title="📅 Set date & time"):
+class CustomDateModal(Modal, title="📅 Set date"):
     r_title = TextInput(
         label="Title",
         placeholder="e.g. Team meeting",
@@ -211,12 +191,6 @@ class CustomDateModal(Modal, title="📅 Set date & time"):
         placeholder="e.g. 25/06/2025  or  25/06",
         max_length=12,
     )
-    advance_notice = TextInput(
-        label="Advance notice in minutes (0 = none)",
-        placeholder="e.g. 30",
-        default="0",
-        max_length=4,
-    )
 
     def __init__(self, user_timezone: str, user_id: int):
         super().__init__()
@@ -224,18 +198,6 @@ class CustomDateModal(Modal, title="📅 Set date & time"):
         self.user_id = user_id
 
     async def on_submit(self, interaction: discord.Interaction):
-        try:
-            advance = int(self.advance_notice.value.strip() or "0")
-            if advance < 0:
-                raise ValueError
-        except ValueError:
-            await _safe_respond(
-                interaction,
-                content="❌ Advance notice must be a non-negative number of minutes.",
-                ephemeral=True,
-            )
-            return
-
         date_local = parse_date(self.date_input.value, self.user_timezone)
         if not date_local:
             await _safe_respond(
@@ -252,7 +214,6 @@ class CustomDateModal(Modal, title="📅 Set date & time"):
             r_title=self.r_title.value,
             description=self.description.value,
             date_local=date_local,
-            advance=advance,
             user_timezone=self.user_timezone,
             user_id=self.user_id,
         )
@@ -275,43 +236,25 @@ class CustomDateModal(Modal, title="📅 Set date & time"):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TimePickerView(View):
-    def __init__(self, r_title, description, date_local, advance, user_timezone, user_id):
+    def __init__(self, r_title, description, date_local, user_timezone, user_id):
         super().__init__(timeout=300)
         self.r_title = r_title
         self.r_description = description
         self.date_local = date_local
-        self.advance = advance
         self.user_timezone = user_timezone
         self.user_id = user_id
         self.selected_hour: int | None = None
         self.selected_minute: int | None = None
 
-        hour_select = Select(
-            placeholder="Hour (00–23)...",
-            options=HOUR_OPTIONS,
-            min_values=1,
-            max_values=1,
-            row=0,
-        )
+        hour_select = Select(placeholder="Hour (00–23)...", options=HOUR_OPTIONS, min_values=1, max_values=1, row=0)
         hour_select.callback = self._on_hour
         self.add_item(hour_select)
 
-        minute_select = Select(
-            placeholder="Minute (:00, :05, :10 ...)...",
-            options=MINUTE_OPTIONS,
-            min_values=1,
-            max_values=1,
-            row=1,
-        )
+        minute_select = Select(placeholder="Minute (:00, :05 ...)...", options=MINUTE_OPTIONS, min_values=1, max_values=1, row=1)
         minute_select.callback = self._on_minute
         self.add_item(minute_select)
 
-        confirm_btn = Button(
-            label="Confirm time",
-            style=discord.ButtonStyle.success,
-            emoji="✅",
-            row=2,
-        )
+        confirm_btn = Button(label="Confirm time", style=discord.ButtonStyle.success, emoji="✅", row=2)
         confirm_btn.callback = self._confirm
         self.add_item(confirm_btn)
 
@@ -334,11 +277,7 @@ class TimePickerView(View):
 
     async def _confirm(self, interaction: discord.Interaction):
         if self.selected_hour is None or self.selected_minute is None:
-            await _safe_respond(
-                interaction,
-                content="❌ Please select both an hour and a minute first.",
-                ephemeral=True,
-            )
+            await _safe_respond(interaction, content="❌ Please select both an hour and a minute first.", ephemeral=True)
             return
 
         next_run = build_datetime(self.date_local, self.selected_hour, self.selected_minute)
@@ -346,19 +285,115 @@ class TimePickerView(View):
         if next_run <= now_utc:
             await _safe_respond(
                 interaction,
-                content=(
-                    f"❌ {discord_ts(next_run, 'f')} is in the past.\n"
-                    "Please go back and pick a future date/time."
-                ),
+                content=f"❌ {discord_ts(next_run, 'f')} is in the past. Please go back and pick a future date/time.",
                 ephemeral=True,
             )
             return
 
-        view = RepeatConfigView(
+        view = AdvanceNoticeView(
             r_title=self.r_title,
             description=self.r_description,
             next_run=next_run,
-            advance=self.advance,
+            user_timezone=self.user_timezone,
+            user_id=self.user_id,
+        )
+        embed = _advance_notice_embed(self.r_title, next_run)
+        try:
+            await interaction.response.edit_message(embed=embed, view=view)
+        except discord.HTTPException as e:
+            logger.error("Failed to advance to AdvanceNoticeView for user %s: %s", self.user_id, e)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 4 — Advance notice picker (days / hours / minutes selects)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AdvanceNoticeView(View):
+    """
+    Three independent selects for days, hours, and minutes.
+    All default to 0 — leaving them untouched means no advance notice.
+    """
+
+    def __init__(self, r_title, description, next_run, user_timezone, user_id):
+        super().__init__(timeout=300)
+        self.r_title = r_title
+        self.r_description = description
+        self.next_run = next_run
+        self.user_timezone = user_timezone
+        self.user_id = user_id
+        self.adv_days = 0
+        self.adv_hours = 0
+        self.adv_minutes = 0
+
+        day_select = Select(
+            placeholder="Days before (default: 0)...",
+            options=ADVANCE_DAY_OPTIONS,
+            min_values=1, max_values=1, row=0,
+        )
+        day_select.callback = self._on_days
+        self.add_item(day_select)
+
+        hour_select = Select(
+            placeholder="Hours before (default: 0)...",
+            options=ADVANCE_HOUR_OPTIONS,
+            min_values=1, max_values=1, row=1,
+        )
+        hour_select.callback = self._on_hours
+        self.add_item(hour_select)
+
+        minute_select = Select(
+            placeholder="Minutes before (default: 0)...",
+            options=ADVANCE_MINUTE_OPTIONS,
+            min_values=1, max_values=1, row=2,
+        )
+        minute_select.callback = self._on_minutes
+        self.add_item(minute_select)
+
+        skip_btn = Button(label="No advance notice", style=discord.ButtonStyle.secondary, emoji="⏭️", row=3)
+        skip_btn.callback = self._skip
+        self.add_item(skip_btn)
+
+        confirm_btn = Button(label="Confirm", style=discord.ButtonStyle.success, emoji="✅", row=3)
+        confirm_btn.callback = self._confirm
+        self.add_item(confirm_btn)
+
+    async def on_timeout(self):
+        logger.debug("AdvanceNoticeView timed out for user %s", self.user_id)
+
+    async def _on_days(self, interaction: discord.Interaction):
+        self.adv_days = int(interaction.data["values"][0])
+        try:
+            await interaction.response.defer()
+        except discord.HTTPException:
+            pass
+
+    async def _on_hours(self, interaction: discord.Interaction):
+        self.adv_hours = int(interaction.data["values"][0])
+        try:
+            await interaction.response.defer()
+        except discord.HTTPException:
+            pass
+
+    async def _on_minutes(self, interaction: discord.Interaction):
+        self.adv_minutes = int(interaction.data["values"][0])
+        try:
+            await interaction.response.defer()
+        except discord.HTTPException:
+            pass
+
+    async def _skip(self, interaction: discord.Interaction):
+        await self._proceed(interaction, advance=0)
+
+    async def _confirm(self, interaction: discord.Interaction):
+        advance = self.adv_days * 1440 + self.adv_hours * 60 + self.adv_minutes
+        await self._proceed(interaction, advance=advance)
+
+    async def _proceed(self, interaction: discord.Interaction, advance: int):
+        view = RepeatConfigView(
+            r_title=self.r_title,
+            description=self.r_description,
+            next_run=self.next_run,
+            advance=advance,
             user_timezone=self.user_timezone,
             user_id=self.user_id,
         )
@@ -366,8 +401,9 @@ class TimePickerView(View):
             title="⚙️ Set repeat schedule",
             description=(
                 f"**{self.r_title}**\n"
-                f"📅 {discord_ts(next_run, 'f')}  ·  {discord_ts(next_run, 'R')}\n\n"
-                "How often should this reminder repeat?"
+                f"📅 {discord_ts(self.next_run, 'f')}  ·  {discord_ts(self.next_run, 'R')}\n"
+                + (f"⏰ {format_advance_notice(advance)}\n" if advance else "")
+                + "\nHow often should this reminder repeat?"
             ),
             color=discord.Color.blurple(),
         )
@@ -377,8 +413,21 @@ class TimePickerView(View):
             logger.error("Failed to advance to RepeatConfigView for user %s: %s", self.user_id, e)
 
 
+def _advance_notice_embed(title: str, next_run: datetime) -> discord.Embed:
+    return discord.Embed(
+        title="⏰ Set advance notice",
+        description=(
+            f"**{title}**\n"
+            f"📅 {discord_ts(next_run, 'f')}  ·  {discord_ts(next_run, 'R')}\n\n"
+            "How much in advance should the bot notify you?\n"
+            "Leave all selectors at **0** or click **No advance notice** to skip."
+        ),
+        color=discord.Color.blurple(),
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 4 — Repeat configuration
+# Step 5 — Repeat configuration
 # ─────────────────────────────────────────────────────────────────────────────
 
 class RepeatConfigView(View):
@@ -619,11 +668,9 @@ class ReminderListView(View):
             logger.error("DB error fetching reminder #%s: %s", reminder_id, e, exc_info=e)
             await _safe_respond(interaction, content="❌ Failed to load reminder details.", ephemeral=True)
             return
-
         if not reminder:
             await _safe_respond(interaction, content="❌ Reminder not found.", ephemeral=True)
             return
-
         embed = _build_detail_embed(reminder)
         view = ReminderDetailView(reminder)
         await _safe_respond(interaction, embed=embed, view=view, ephemeral=True)
@@ -691,8 +738,6 @@ class ReminderDetailView(View):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class DeleteReminderView(View):
-    """Select a reminder from the list, then confirm deletion."""
-
     def __init__(self, reminders, user_id: int):
         super().__init__(timeout=120)
         self.reminders = {str(r["id"]): r for r in reminders}
@@ -725,22 +770,13 @@ class DeleteReminderView(View):
     async def _on_select(self, interaction: discord.Interaction):
         self.selected_id = interaction.data["values"][0]
         reminder = self.reminders[self.selected_id]
-
-        # Enable the delete button now that something is selected
         self.confirm_btn.disabled = False
         dt = next_run_utc(reminder)
-        embed = discord.Embed(
-            title=f"🗑️ Delete reminder #{reminder['id']}?",
-            color=discord.Color.red(),
-        )
+        embed = discord.Embed(title=f"🗑️ Delete reminder #{reminder['id']}?", color=discord.Color.red())
         embed.add_field(name="📌 Title", value=reminder["title"], inline=False)
         if reminder["description"]:
             embed.add_field(name="📝 Description", value=reminder["description"], inline=False)
-        embed.add_field(
-            name="📅 Next run",
-            value=f"{discord_ts(dt, 'f')}  ·  {discord_ts(dt, 'R')}",
-            inline=False,
-        )
+        embed.add_field(name="📅 Next run", value=f"{discord_ts(dt, 'f')}  ·  {discord_ts(dt, 'R')}", inline=False)
         embed.add_field(name="🔁 Repeat", value=format_repeat(reminder), inline=True)
         embed.set_footer(text="This action cannot be undone.")
         try:
@@ -752,7 +788,6 @@ class DeleteReminderView(View):
         if not self.selected_id:
             await _safe_respond(interaction, content="❌ No reminder selected.", ephemeral=True)
             return
-
         reminder_id = int(self.selected_id)
         try:
             sched.remove_reminder_jobs(reminder_id)
@@ -761,11 +796,9 @@ class DeleteReminderView(View):
             logger.error("Error deleting reminder #%s for user %s: %s", reminder_id, self.user_id, e, exc_info=e)
             await _safe_respond(interaction, content="❌ Failed to delete the reminder.", ephemeral=True)
             return
-
         if not deleted:
             await _safe_respond(interaction, content="❌ Reminder not found or already deleted.", ephemeral=True)
             return
-
         logger.info("User %s deleted reminder #%s via selector.", self.user_id, reminder_id)
         embed = discord.Embed(
             title="✅ Reminder deleted",
@@ -778,11 +811,7 @@ class DeleteReminderView(View):
             logger.error("Failed to confirm deletion for #%s: %s", reminder_id, e)
 
     async def _on_cancel(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title="✖️ Cancelled",
-            description="No reminders were deleted.",
-            color=discord.Color.greyple(),
-        )
+        embed = discord.Embed(title="✖️ Cancelled", description="No reminders were deleted.", color=discord.Color.greyple())
         try:
             await interaction.response.edit_message(embed=embed, view=None)
         except discord.HTTPException as e:
@@ -814,11 +843,10 @@ def _build_confirmation_embed(
         day_list = [DAY_LABELS.get(d.strip(), d) for d in (days or "").split(",") if d.strip()]
         repeat_str = "Weekly · " + ", ".join(day_list)
     else:
-        unit_label = UNIT_LABELS.get(unit, unit)
-        repeat_str = f"Every {interval} {unit_label}"
+        repeat_str = f"Every {interval} {UNIT_LABELS.get(unit, unit)}"
 
-    embed.add_field(name="🔁 Repeat",          value=repeat_str,                              inline=True)
-    embed.add_field(name="⏰ Advance notice",   value=f"{advance} min before" if advance else "None", inline=True)
+    embed.add_field(name="🔁 Repeat",         value=repeat_str,                      inline=True)
+    embed.add_field(name="⏰ Advance notice",  value=format_advance_notice(advance),  inline=True)
     embed.set_footer(text=f"ID #{reminder_id} · Use /reminders to see all your reminders")
     return embed
 
@@ -832,12 +860,8 @@ def _build_detail_embed(reminder) -> discord.Embed:
     )
     if reminder["description"]:
         embed.add_field(name="📝 Description", value=reminder["description"], inline=False)
-    embed.add_field(
-        name="📅 Next run",
-        value=f"{discord_ts(dt, 'f')}\n{discord_ts(dt, 'R')}",
-        inline=True,
-    )
-    embed.add_field(name="🔁 Repeat",        value=format_repeat(reminder),                          inline=True)
-    embed.add_field(name="⏰ Advance notice", value=f"{reminder['advance_notice']} min before" if reminder["advance_notice"] else "None", inline=True)
-    embed.add_field(name="Status",            value=status,                                          inline=True)
+    embed.add_field(name="📅 Next run",       value=f"{discord_ts(dt, 'f')}\n{discord_ts(dt, 'R')}", inline=True)
+    embed.add_field(name="🔁 Repeat",         value=format_repeat(reminder),                         inline=True)
+    embed.add_field(name="⏰ Advance notice",  value=format_advance_notice(reminder["advance_notice"]), inline=True)
+    embed.add_field(name="Status",             value=status,                                          inline=True)
     return embed

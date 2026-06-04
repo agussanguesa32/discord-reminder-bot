@@ -16,7 +16,8 @@
       "Bash(\"venv/Scripts/python.exe\" -c \"print\\('direct exec'\\)\")",
       "Bash(\"venv/Scripts/python.exe\" -c \"from utils import parse_date; print\\(parse_date\\('25/06/2027','America/Argentina/Buenos_Aires'\\)\\); print\\(parse_date\\('01/13/2027','America/Argentina/Buenos_Aires'\\)\\)\")",
       "Bash(\"venv/Scripts/python.exe\" -c \"from cogs.reminders import RemindersCog; from views.reminder_views import QuickTimeView,ReminderDetailsModal,CustomDateModal,TimePickerView,RepeatConfigView,WeeklyDayPickerView,IntervalModal,ReminderListView,ReminderDetailView,DeleteReminderView; print\\('all classes OK'\\)\")",
-      "Bash(del *)"
+      "Bash(del *)",
+      "Bash(\"venv/Scripts/python.exe\" -c \"from views.reminder_views import QuickTimeView,ReminderDetailsModal,CustomDateModal,TimePickerView,AdvanceNoticeView,RepeatConfigView,WeeklyDayPickerView,IntervalModal,ReminderListView,ReminderDetailView,DeleteReminderView; print\\('Imports OK'\\)\")"
     ]
   }
 }
