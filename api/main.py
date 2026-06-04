@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.auth import router as auth_router
 from api.routes.reminders import router as reminders_router
 from api.routes.users import router as users_router
+from api.redis_client import init_redis, close_redis
 from shared import database as db
 
 load_dotenv()
@@ -19,7 +20,15 @@ async def lifespan(app: FastAPI):
     if missing:
         raise RuntimeError(f"Variables de entorno faltantes: {', '.join(missing)}")
     db.init_db()
+    try:
+        await init_redis()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Redis unavailable at startup — events won't be published: %s", e
+        )
     yield
+    await close_redis()
 
 
 app = FastAPI(

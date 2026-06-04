@@ -187,3 +187,25 @@ def update_reminder_field(reminder_id: int, user_id: str, field: str, value) -> 
         )
         conn.commit()
     return cursor.rowcount > 0
+
+
+def update_reminder_fields(reminder_id: int, user_id: str, fields: dict) -> bool:
+    """Update multiple fields atomically in a single transaction."""
+    allowed = {
+        "title", "description", "next_run", "repeat_type", "repeat_interval",
+        "repeat_unit", "repeat_days", "advance_notice", "timezone", "active",
+    }
+    invalid = set(fields) - allowed
+    if invalid:
+        raise ValueError(f"Fields not allowed to be updated: {invalid}")
+    if not fields:
+        return False
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    values = list(fields.values()) + [reminder_id, str(user_id)]
+    with _get_db() as conn:
+        cursor = conn.execute(
+            f"UPDATE reminders SET {set_clause} WHERE id = ? AND user_id = ?",
+            values,
+        )
+        conn.commit()
+    return cursor.rowcount > 0

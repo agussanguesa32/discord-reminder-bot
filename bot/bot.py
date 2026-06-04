@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from shared import database as db
 import scheduler as sched
+import redis_listener
 
 load_dotenv()
 
@@ -27,6 +28,7 @@ class ReminderBot(commands.Bot):
         intents = discord.Intents.default()
         intents.dm_messages = True
         super().__init__(command_prefix="!", intents=intents)
+        self._redis_task: asyncio.Task | None = None
 
     async def setup_hook(self):
         try:
@@ -51,6 +53,13 @@ class ReminderBot(commands.Bot):
             sched.scheduler.start()
             logger.info("Scheduler started.")
             sched.load_all_reminders()
+
+        # Start Redis listener as a background task
+        if self._redis_task is None or self._redis_task.done():
+            self._redis_task = asyncio.create_task(
+                redis_listener.listen(), name="redis-listener"
+            )
+
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
@@ -87,25 +96,29 @@ async def main():
     bot = ReminderBot()
 
     loop = asyncio.get_running_loop()
-
     _shutting_down = False
 
     async def shutdown(sig: signal.Signals):
         nonlocal _shutting_down
         if _shutting_down:
-            logger.debug("Shutdown already in progress — ignoring duplicate signal %s.", sig.name)
             return
         _shutting_down = True
         logger.info("Received %s — shutting down gracefully.", sig.name)
+
+        # Cancel Redis listener
+        if bot._redis_task and not bot._redis_task.done():
+            bot._redis_task.cancel()
+            try:
+                await bot._redis_task
+            except asyncio.CancelledError:
+                pass
+
         if sched.scheduler.running:
             sched.scheduler.shutdown(wait=False)
             logger.info("Scheduler stopped.")
         await bot.close()
         logger.info("Bot closed.")
 
-    # SIGTERM is sent by Docker on `docker stop` / `docker compose down`.
-    # SIGINT handles Ctrl-C in local dev. Windows doesn't support add_signal_handler,
-    # so we fall back silently — asyncio.run() still handles KeyboardInterrupt there.
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
             loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(shutdown(s)))

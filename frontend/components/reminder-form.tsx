@@ -40,13 +40,16 @@ const REPEAT_OPTIONS = [
 const INTERVAL_UNITS = ['minutes', 'hours', 'days', 'weeks']
 
 const NOTICE_OPTIONS = [
-  { value: '0',   label: 'Off' },
-  { value: '5',   label: '5 min' },
-  { value: '15',  label: '15 min' },
-  { value: '30',  label: '30 min' },
-  { value: '60',  label: '1 hour' },
-  { value: '120', label: '2 hours' },
+  { value: '0',      label: 'Off' },
+  { value: '5',      label: '5 min' },
+  { value: '15',     label: '15 min' },
+  { value: '30',     label: '30 min' },
+  { value: '60',     label: '1 hour' },
+  { value: '120',    label: '2 hours' },
+  { value: 'custom', label: 'Custom' },
 ]
+
+const NOTICE_PRESETS = new Set(['0', '5', '15', '30', '60', '120'])
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i)
 const MINUTES = [0, 15, 30, 45]
@@ -127,7 +130,13 @@ export default function ReminderForm({
   const [repeatDays, setRD]     = useState<string[]>(
     defaultValues?.repeat_days?.split(',').map((d) => d.trim()) ?? []
   )
-  const [advanceNotice, setAN]  = useState(String(defaultValues?.advance_notice ?? 0))
+  const initNotice = String(defaultValues?.advance_notice ?? 0)
+  const [advanceNotice, setAN]  = useState(
+    NOTICE_PRESETS.has(initNotice) ? initNotice : 'custom'
+  )
+  const [customNotice, setCustomNotice] = useState(
+    !NOTICE_PRESETS.has(initNotice) ? initNotice : ''
+  )
   const [error, setError]       = useState<string | null>(null)
 
   // Date/time state
@@ -141,10 +150,6 @@ export default function ReminderForm({
     ? (() => { const d = new Date(calDate); d.setHours(hour, minute, 0, 0); return d })()
     : undefined
 
-  function emit(d: Date | undefined, h: number, m: number) {
-    if (d) { const r = new Date(d); r.setHours(h, m, 0, 0) }
-  }
-
   function applyPreset(p: Date) {
     setCalDate(p); setHour(p.getHours()); setMinute(p.getMinutes())
   }
@@ -156,9 +161,17 @@ export default function ReminderForm({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
-    if (!title.trim())                            return setError('Title is required.')
-    if (!dateTime)                                return setError('Pick a date and time.')
+    if (!title.trim())                                 return setError('Title is required.')
+    if (!dateTime)                                     return setError('Pick a date and time.')
     if (repeatType === 'weekly' && !repeatDays.length) return setError('Select at least one day.')
+    if (advanceNotice === 'custom') {
+      const mins = Number(customNotice)
+      if (!customNotice.trim() || isNaN(mins) || mins < 1)
+        return setError('Enter a valid advance notice (at least 1 minute).')
+    }
+
+    const resolvedNotice =
+      advanceNotice === 'custom' ? Number(customNotice) : Number(advanceNotice)
 
     onSubmit({
       title: title.trim(),
@@ -168,7 +181,7 @@ export default function ReminderForm({
       repeat_interval: repeatType === 'interval' ? repeatInterval : 0,
       repeat_unit: repeatType === 'interval' ? repeatUnit : null,
       repeat_days: repeatType === 'weekly' ? repeatDays.join(',') : null,
-      advance_notice: Number(advanceNotice),
+      advance_notice: resolvedNotice,
       timezone: userTimezone,
     })
   }
@@ -277,6 +290,20 @@ export default function ReminderForm({
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
+            {advanceNotice === 'custom' && (
+              <div className="flex items-center gap-2 pt-1">
+                <Input
+                  type="number"
+                  min={1}
+                  value={customNotice}
+                  onChange={(e) => setCustomNotice(e.target.value)}
+                  placeholder="e.g. 45"
+                  className="w-28"
+                  autoFocus
+                />
+                <span className="text-sm text-muted-foreground">minutes before</span>
+              </div>
+            )}
           </div>
         </div>
 

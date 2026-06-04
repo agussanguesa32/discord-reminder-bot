@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends
 from api.auth import get_current_user
 from api.models import ReminderCreate, ReminderUpdate, ReminderResponse
+from api.redis_client import publish
 from shared import database as db
 
 router = APIRouter()
@@ -14,7 +15,7 @@ def list_reminders(active_only: bool = True, user: dict = Depends(get_current_us
 
 
 @router.post("", response_model=ReminderResponse, status_code=201)
-def create_reminder(body: ReminderCreate, user: dict = Depends(get_current_user)):
+async def create_reminder(body: ReminderCreate, user: dict = Depends(get_current_user)):
     next_run = body.next_run
     if next_run.tzinfo is None:
         next_run = next_run.replace(tzinfo=timezone.utc)
@@ -31,8 +32,8 @@ def create_reminder(body: ReminderCreate, user: dict = Depends(get_current_user)
         advance_notice=body.advance_notice,
         tz_name=body.timezone,
     )
-    row = db.get_reminder(reminder_id)
-    return ReminderResponse.from_row(row)
+    await publish("created", reminder_id)
+    return ReminderResponse.from_row(db.get_reminder(reminder_id))
 
 
 @router.get("/{reminder_id}", response_model=ReminderResponse)
@@ -44,7 +45,7 @@ def get_reminder(reminder_id: int, user: dict = Depends(get_current_user)):
 
 
 @router.patch("/{reminder_id}", response_model=ReminderResponse)
-def update_reminder(
+async def update_reminder(
     reminder_id: int, body: ReminderUpdate, user: dict = Depends(get_current_user)
 ):
     row = db.get_reminder(reminder_id)
@@ -52,6 +53,7 @@ def update_reminder(
         raise HTTPException(status_code=404, detail="Reminder no encontrado")
 
     updates = body.model_dump(exclude_none=True)
+    coerced: dict = {}
     for field, value in updates.items():
         if field == "next_run" and isinstance(value, datetime):
             if value.tzinfo is None:
@@ -59,14 +61,17 @@ def update_reminder(
             value = value.isoformat()
         elif field == "active":
             value = 1 if value else 0
-        db.update_reminder_field(reminder_id, user["discord_user_id"], field, value)
+        coerced[field] = value
 
+    db.update_reminder_fields(reminder_id, user["discord_user_id"], coerced)
+    await publish("updated", reminder_id)
     return ReminderResponse.from_row(db.get_reminder(reminder_id))
 
 
 @router.delete("/{reminder_id}", status_code=204)
-def delete_reminder(reminder_id: int, user: dict = Depends(get_current_user)):
+async def delete_reminder(reminder_id: int, user: dict = Depends(get_current_user)):
     row = db.get_reminder(reminder_id)
     if not row or row["user_id"] != user["discord_user_id"]:
         raise HTTPException(status_code=404, detail="Reminder no encontrado")
     db.delete_reminder(reminder_id, user["discord_user_id"])
+    await publish("deleted", reminder_id)
