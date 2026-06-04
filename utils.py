@@ -48,6 +48,14 @@ def parse_date(text: str, timezone: str) -> datetime | None:
             dt = datetime.strptime(text.strip(), fmt)
             if "%Y" not in fmt and "%y" not in fmt:
                 dt = dt.replace(year=now.year)
+                # If the calendar date is strictly before today, the user almost
+                # certainly means next year (e.g. typing "01/02" in June 2026
+                # → February 1st 2027, not the past).
+                # We compare dates only — today itself is still valid because
+                # the time hasn't been picked yet; that check happens later.
+                localized = tz.localize(dt.replace(hour=0, minute=0, second=0, microsecond=0))
+                if localized.date() < now.date():
+                    dt = dt.replace(year=now.year + 1)
             return tz.localize(dt.replace(hour=0, minute=0, second=0, microsecond=0))
         except ValueError:
             continue
