@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 CHANNEL = "reminder:events"
 RETRY_DELAY = 5  # seconds between reconnection attempts
+POLL_TIMEOUT = 5.0  # seconds to wait for a message before polling again
 
 
 async def _handle(action: str, reminder_id: int) -> None:
@@ -28,24 +29,43 @@ async def _handle(action: str, reminder_id: int) -> None:
 
 async def listen() -> None:
     """Background task: subscribe to Redis and react to reminder events.
-    Reconnects automatically if the connection drops."""
+    Uses get_message() polling so idle connections never raise TimeoutError.
+    Reconnects automatically if the connection actually drops."""
     logger.info("Redis listener starting — channel: %s", CHANNEL)
     while True:
         client: aioredis.Redis | None = None
         try:
-            client = aioredis.from_url(REDIS_URL, decode_responses=True)
-            pubsub = client.pubsub()
+            # socket_timeout=None: never time out waiting for pub/sub messages.
+            # socket_keepalive=True: TCP keepalive to detect dead connections.
+            client = aioredis.from_url(
+                REDIS_URL,
+                decode_responses=True,
+                socket_timeout=None,
+                socket_connect_timeout=10,
+                socket_keepalive=True,
+            )
+            pubsub = client.pubsub(ignore_subscribe_messages=True)
             await pubsub.subscribe(CHANNEL)
             logger.info("Redis listener subscribed to %s", CHANNEL)
 
-            async for message in pubsub.listen():
-                if message["type"] != "message":
+            while True:
+                # get_message returns None after POLL_TIMEOUT with no message.
+                # It does NOT raise an exception on timeout — only on real errors.
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True,
+                    timeout=POLL_TIMEOUT,
+                )
+                if message is None:
+                    continue  # idle — keep polling
+
+                if message.get("type") != "message":
                     continue
+
                 try:
                     data = json.loads(message["data"])
                     action: str = data["action"]
                     rid: int = int(data["reminder_id"])
-                    logger.info("Redis event received: %s reminder #%s", action, rid)
+                    logger.info("Redis event: %s reminder #%s", action, rid)
                     await _handle(action, rid)
                 except Exception as e:
                     logger.error("Error handling Redis event %s: %s", message, e)

@@ -1,42 +1,73 @@
 # Reminder Bot
 
-A personal Discord reminder bot that communicates exclusively via **Direct Messages**, paired with a **REST API** for programmatic access and future frontend integration.
+A personal Discord reminder bot with a REST API and web frontend. Reminders are delivered via Discord DMs and can be managed from either the Discord slash commands or the web interface.
 
 ---
 
 ## Table of Contents
 
-- [Bot Features](#bot-features)
-- [Bot Commands](#bot-commands)
+- [Architecture](#architecture)
+- [Features](#features)
+- [Discord Bot Commands](#discord-bot-commands)
+- [Web Frontend](#web-frontend)
 - [REST API](#rest-api)
   - [Authentication](#authentication)
   - [Endpoints](#endpoints)
   - [Request & Response Examples](#request--response-examples)
 - [Setup](#setup)
+  - [Prerequisites](#prerequisites)
+  - [Discord Application](#discord-application)
+  - [Running with Docker (recommended)](#running-with-docker-recommended)
   - [Running locally](#running-locally)
-  - [Running with Docker](#running-with-docker)
 - [Environment Variables](#environment-variables)
 - [Project Structure](#project-structure)
 - [Technical Notes](#technical-notes)
 
 ---
 
-## Bot Features
+## Architecture
 
-- **Create reminders** via an interactive modal — title, description, date/time, and advance notice
-- **Repeat options** — no repeat, daily, weekly (pick specific days), or a fully custom interval (every N minutes / hours / days / weeks / months)
-- **Advance notice** — get notified X minutes before the reminder fires
-- **Persistent** — all reminders survive bot restarts; missed ones are delivered automatically on next startup
-- **Per-user timezone** — defaults to `America/Argentina/Buenos_Aires`, configurable per user
-- **Pause / Resume / Delete** reminders without recreating them
+```
+┌─────────────┐     slash commands     ┌─────────────────┐
+│   Discord   │ ◄────────────────────► │   Bot (Python)  │
+└─────────────┘                        └────────┬────────┘
+                                                │ read/write
+┌─────────────┐   OAuth2 + REST API    ┌────────▼────────┐
+│  Frontend   │ ◄────────────────────► │   API (FastAPI) │
+│  (Next.js)  │                        └────────┬────────┘
+└─────────────┘                                 │ read/write
+                                       ┌────────▼────────┐
+                                       │  SQLite (shared) │
+                                       └─────────────────┘
+                    ┌─────────────────────────────────┐
+                    │  Redis pub/sub (instant sync)    │
+                    │  API publishes → Bot schedules   │
+                    └─────────────────────────────────┘
+```
+
+**Four Docker services:** `redis`, `bot`, `api`, `frontend` — all orchestrated with Docker Compose. The bot and API share the same SQLite database via a bind-mounted volume. When a reminder is created or changed via the API or frontend, Redis delivers the event to the bot instantly so the job is scheduled without a restart.
 
 ---
 
-## Bot Commands
+## Features
+
+- **Discord slash commands** — create, list, pause, resume, and delete reminders interactively
+- **Web interface** — full CRUD via a Next.js frontend with Discord OAuth2 login
+- **Repeat schedules** — once, daily, weekly (specific days), monthly, yearly, or every N minutes/hours/days/weeks
+- **Advance notice** — optional early notification before the reminder fires
+- **Missed reminders** — delivered automatically on bot restart with a late-delivery notice
+- **Per-user timezone** — each user configures their own; defaults to `America/Argentina/Buenos_Aires`
+- **Pause / Resume** — suspend a reminder without deleting it
+- **Real-time sync** — reminders created via the web are scheduled instantly via Redis pub/sub, no bot restart needed
+- **Resilient** — bot reconnects to Discord and Redis automatically; API degrades gracefully if Redis is unavailable
+
+---
+
+## Discord Bot Commands
 
 | Command | Description |
 |---|---|
-| `/reminder` | Create a new reminder |
+| `/reminder` | Create a new reminder via interactive modal |
 | `/reminders` | List all your active reminders |
 | `/delete-reminder` | Delete a reminder |
 | `/timezone` | View your current timezone |
@@ -44,114 +75,71 @@ A personal Discord reminder bot that communicates exclusively via **Direct Messa
 
 ---
 
+## Web Frontend
+
+Available at `http://<host>:3000` after startup.
+
+**Login** — click "Continue with Discord" to authenticate via OAuth2. Your session is stored in an HttpOnly cookie (7-day expiry).
+
+**Dashboard** — shows all your reminders with a live countdown. From here you can:
+- Create reminders with a date picker, time selector, and quick presets ("Tonight 8pm", "Tomorrow 9am", etc.)
+- Edit any field of an existing reminder
+- Pause / resume reminders
+- Delete reminders with a confirmation dialog
+
+---
+
 ## REST API
 
-The API runs on port `8000` and uses **Discord OAuth2** to authenticate users. All protected endpoints require a JWT bearer token obtained via the OAuth2 flow.
+The API runs on port `8000`. Interactive docs (Swagger UI) are at `http://<host>:8000/docs`.
 
-Interactive docs (Swagger UI) are available at `http://localhost:8000/docs` once the API is running.
+All `/api/*` endpoints require a valid JWT in the `Authorization` header.
 
 ### Authentication
 
-The API uses the **Authorization Code** OAuth2 flow with Discord.
+The API uses the **Discord OAuth2 Authorization Code** flow.
 
 #### Flow
 
 ```
-1. Frontend redirects user to GET /auth/login
-2. User logs in on Discord and grants permission
-3. Discord redirects to /auth/callback?code=...
-4. API exchanges the code for a Discord access token
-5. API fetches the user's Discord profile
-6. API returns a signed JWT (7-day expiry)
-7. Frontend stores the JWT and sends it as Bearer token on every request
+1. Browser → GET /auth/login  →  302 redirect to Discord
+2. User grants permission on Discord
+3. Discord → GET /auth/callback?code=...  →  API exchanges code for Discord token
+4. API fetches Discord user profile, issues a signed JWT
+5. If FRONTEND_URL is set: redirect to <FRONTEND_URL>/auth/callback?token=<jwt>
+   Otherwise: return {"access_token": "<jwt>", "token_type": "bearer"}
+6. Include JWT in all subsequent requests: Authorization: Bearer <jwt>
 ```
 
-#### Getting a token
+JWT tokens are signed with `HS256` and expire after **7 days**.
 
-**Step 1 — Redirect the user to Discord login:**
+#### Endpoints
 
-```
-GET /auth/login
-```
-
-This returns a redirect to Discord's OAuth2 authorization page. No parameters needed.
-
-**Step 2 — Handle the callback:**
-
-Discord redirects back to your configured `DISCORD_REDIRECT_URI` with a `code` query parameter. The API handles this automatically:
-
-```
-GET /auth/callback?code=<discord_code>
-```
-
-Response (when `FRONTEND_URL` is not set):
-
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "bearer"
-}
-```
-
-When `FRONTEND_URL` is configured, the API redirects to:
-```
-http://your-frontend.com?token=eyJhbGci...
-```
-
-**Step 3 — Use the token:**
-
-Include the JWT in the `Authorization` header on all subsequent requests:
-
-```
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-```
-
-#### Verify your token
-
-```
-GET /auth/me
-Authorization: Bearer <token>
-```
-
-```json
-{
-  "discord_user_id": "123456789012345678",
-  "username": "yourname",
-  "avatar": "abc123def456"
-}
-```
-
----
-
-### Endpoints
-
-All `/api/*` endpoints require `Authorization: Bearer <token>`.
-
-#### Reminders
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/reminders` | List your reminders |
-| `POST` | `/api/reminders` | Create a reminder |
-| `GET` | `/api/reminders/{id}` | Get a single reminder |
-| `PATCH` | `/api/reminders/{id}` | Update reminder fields |
-| `DELETE` | `/api/reminders/{id}` | Delete a reminder |
-
-#### Users
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/users/me` | Get your profile and timezone |
-| `PATCH` | `/api/users/me/timezone` | Update your timezone |
-
-#### Auth & Health
+**Auth & health** (no token required):
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/auth/login` | Redirect to Discord OAuth2 |
-| `GET` | `/auth/callback` | OAuth2 callback — returns JWT |
-| `GET` | `/auth/me` | Verify token and get user info |
-| `GET` | `/health` | Health check |
+| `GET` | `/auth/callback?code=...` | OAuth2 callback — issues JWT |
+| `GET` | `/auth/me` | Decode and return current token payload |
+| `GET` | `/health` | Health check — `{"status": "ok"}` |
+
+**Reminders** (Bearer token required):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/reminders` | List reminders (`?active_only=true` by default) |
+| `POST` | `/api/reminders` | Create a reminder |
+| `GET` | `/api/reminders/{id}` | Get a single reminder |
+| `PATCH` | `/api/reminders/{id}` | Update one or more fields |
+| `DELETE` | `/api/reminders/{id}` | Delete a reminder |
+
+**Users** (Bearer token required):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/users/me` | Get profile and timezone |
+| `PATCH` | `/api/users/me/timezone` | Update your timezone |
 
 ---
 
@@ -159,9 +147,9 @@ All `/api/*` endpoints require `Authorization: Bearer <token>`.
 
 #### List reminders
 
-```
+```http
 GET /api/reminders
-GET /api/reminders?active_only=false    # include inactive/past reminders
+GET /api/reminders?active_only=false
 Authorization: Bearer <token>
 ```
 
@@ -172,7 +160,7 @@ Authorization: Bearer <token>
     "user_id": "123456789012345678",
     "title": "Doctor appointment",
     "description": "Bring insurance card",
-    "next_run": "2026-06-10T14:00:00+00:00",
+    "next_run": "2026-06-10T17:00:00+00:00",
     "repeat_type": "none",
     "repeat_interval": 0,
     "repeat_unit": null,
@@ -185,11 +173,9 @@ Authorization: Bearer <token>
 ]
 ```
 
----
-
 #### Create a reminder
 
-```
+```http
 POST /api/reminders
 Authorization: Bearer <token>
 Content-Type: application/json
@@ -206,25 +192,24 @@ Content-Type: application/json
 }
 ```
 
-`next_run` accepts any ISO 8601 datetime. If no timezone offset is provided, UTC is assumed.
+`next_run` is any ISO 8601 datetime. Without a timezone offset, UTC is assumed.
 
 **`repeat_type` values:**
 
-| Value | Description |
-|-------|-------------|
-| `none` | One-time reminder (default) |
-| `daily` | Every day at the same time |
-| `weekly` | Specific weekdays — set `repeat_days` |
-| `monthly` | Every month on the same day |
-| `yearly` | Every year on the same date |
-| `interval` | Every N units — set `repeat_interval` and `repeat_unit` |
+| Value | Required extra fields | Description |
+|---|---|---|
+| `none` | — | One-time (default) |
+| `daily` | — | Every day at the same time |
+| `weekly` | `repeat_days` | Specific weekdays |
+| `monthly` | — | Same day each month |
+| `yearly` | — | Same date each year |
+| `interval` | `repeat_interval`, `repeat_unit` | Every N units |
 
-**`repeat_unit` values** (only for `interval`): `minutes`, `hours`, `days`, `weeks`, `months`
+`repeat_days` — comma-separated: `"monday,tuesday,wednesday,thursday,friday"`
 
-**`repeat_days`** (only for `weekly`): comma-separated list of day names, e.g. `"monday,wednesday,friday"`
+`repeat_unit` — one of: `minutes`, `hours`, `days`, `weeks`
 
-**Weekly reminder example:**
-
+**Weekly example:**
 ```json
 {
   "title": "Team standup",
@@ -235,8 +220,7 @@ Content-Type: application/json
 }
 ```
 
-**Interval reminder example:**
-
+**Custom interval example:**
 ```json
 {
   "title": "Drink water",
@@ -248,83 +232,38 @@ Content-Type: application/json
 }
 ```
 
-Response `201 Created`:
-
-```json
-{
-  "id": 5,
-  "user_id": "123456789012345678",
-  "title": "Take medication",
-  ...
-}
-```
-
----
-
-#### Get a single reminder
-
-```
-GET /api/reminders/5
-Authorization: Bearer <token>
-```
-
-Returns the same shape as a single item in the list. Returns `404` if the reminder doesn't exist or belongs to another user.
-
----
+Response — `201 Created` — the full reminder object.
 
 #### Update a reminder
 
-Only include the fields you want to change. All fields are optional.
+Send only the fields you want to change:
 
-```
-PATCH /api/reminders/5
+```http
+PATCH /api/reminders/1
 Authorization: Bearer <token>
 Content-Type: application/json
 ```
 
 ```json
-{
-  "title": "Take medication (updated)",
-  "advance_notice": 15
-}
+{ "title": "Updated title", "advance_notice": 15 }
 ```
 
-**Pause a reminder:**
+Pause: `{ "active": false }` — Resume: `{ "active": true }`
 
-```json
-{ "active": false }
-```
-
-**Resume a reminder:**
-
-```json
-{ "active": true }
-```
-
-**Change the scheduled time:**
-
-```json
-{ "next_run": "2026-06-06T09:00:00-03:00" }
-```
-
-Response: the updated reminder object.
-
----
+Response — `200 OK` — the updated reminder object.
 
 #### Delete a reminder
 
-```
-DELETE /api/reminders/5
+```http
+DELETE /api/reminders/1
 Authorization: Bearer <token>
 ```
 
-Response: `204 No Content`
+Response — `204 No Content`
 
----
+#### Get / update timezone
 
-#### Get your profile
-
-```
+```http
 GET /api/users/me
 Authorization: Bearer <token>
 ```
@@ -333,47 +272,33 @@ Authorization: Bearer <token>
 {
   "discord_user_id": "123456789012345678",
   "username": "yourname",
-  "avatar": "abc123def456",
+  "avatar": "abc123",
   "timezone": "America/Argentina/Buenos_Aires"
 }
 ```
 
----
-
-#### Update your timezone
-
-```
+```http
 PATCH /api/users/me/timezone
 Authorization: Bearer <token>
 Content-Type: application/json
-```
 
-```json
-{ "timezone": "America/New_York" }
-```
-
-```json
 { "timezone": "America/New_York" }
 ```
 
 Any valid [tz database name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) is accepted. Returns `400` for unknown values.
 
----
-
 #### Error responses
 
-All errors follow this shape:
-
 ```json
-{ "detail": "Human-readable error message" }
+{ "detail": "Human-readable message" }
 ```
 
 | Status | Meaning |
 |--------|---------|
-| `400` | Bad request — invalid input or OAuth error |
-| `401` | Missing or invalid/expired JWT |
+| `400` | Bad request or OAuth failure |
+| `401` | Missing, invalid, or expired JWT |
 | `404` | Reminder not found or belongs to another user |
-| `422` | Validation error — check the `detail` array for field-level errors |
+| `422` | Validation error — `detail` is an array with field-level info |
 
 ---
 
@@ -381,76 +306,123 @@ All errors follow this shape:
 
 ### Prerequisites
 
-- Python 3.12+
-- Docker & Docker Compose (for the full stack)
-- A Discord application ([create one](https://discord.com/developers/applications)) with:
-  - A **Bot** token (for the Discord bot)
-  - **OAuth2** credentials — Client ID and Client Secret
-  - `http://localhost:8000/auth/callback` added to **OAuth2 Redirects**
+- **Docker & Docker Compose** — for the recommended deployment
+- **Python 3.12+** and **Node.js 22+** — only needed for local development without Docker
+- A **Discord application** — [create one here](https://discord.com/developers/applications)
 
-### Running locally
+### Discord Application
 
-**Bot only:**
+You need one Discord application for both the bot token and the OAuth2 credentials.
+
+1. Go to [discord.com/developers/applications](https://discord.com/developers/applications) and create (or open) your app.
+2. **Bot tab** → Reset Token → copy `DISCORD_TOKEN`.
+3. **OAuth2 tab** → copy `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET`.
+4. **OAuth2 → Redirects** → Add `http://<your-host>:8000/auth/callback` (must match `DISCORD_REDIRECT_URI` exactly).
+5. **Bot tab** → enable **Message Content Intent** and **Server Members Intent** if required.
+
+---
+
+### Running with Docker (recommended)
 
 ```bash
-git clone <your-repo-url>
+git clone <repo-url>
 cd reminder-bot
 
-python -m venv venv
-venv\Scripts\activate        # Windows
-source venv/bin/activate     # macOS / Linux
-
-pip install -r bot/requirements.txt
-
+# Copy and fill in the environment file
 cp .env.example .env
-# Set DISCORD_TOKEN in .env
+# Edit .env — at minimum set the six required variables (see below)
 
-python bot/bot.py
-```
-
-**API only:**
-
-```bash
-pip install -r api/requirements.txt
-
-# Set DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, JWT_SECRET in .env
-
-uvicorn api.main:app --reload
-# Docs at http://localhost:8000/docs
-```
-
-### Running with Docker
-
-```bash
-cp .env.example .env
-# Fill in all required variables (see Environment Variables below)
-
-# Build and start both services
+# Build and start all four services (redis, bot, api, frontend)
 docker compose up --build -d
 
-# Logs
+# Follow logs
+docker compose logs -f
+
+# Per-service logs
 docker compose logs -f bot
 docker compose logs -f api
 
-# Stop
+# Stop everything
 docker compose down
 ```
 
-The database is stored in `./data/reminders.db` on the host (bind-mounted into both containers). It survives rebuilds and restarts.
+The SQLite database is stored in `./data/reminders.db` on the host and survives container rebuilds, restarts, and `docker compose down`.
+
+**Ports exposed on the host:**
+
+| Service | Port | URL |
+|---|---|---|
+| API | `8000` | `http://<host>:8000` · docs at `/docs` |
+| Frontend | `3000` | `http://<host>:3000` |
+| Redis | internal only | not exposed |
+
+---
+
+### Running locally
+
+**All three Python services** share the same virtualenv at the project root:
+
+```bash
+python -m venv venv
+source venv/bin/activate          # Linux/macOS
+venv\Scripts\activate             # Windows PowerShell
+
+pip install -r bot/requirements.txt -r api/requirements.txt
+cp .env.example .env
+# Fill in .env
+```
+
+**Start Redis** (required for real-time sync — skip if running bot only):
+
+```bash
+docker run -d -p 6379:6379 redis:7-alpine
+```
+
+**Bot:**
+
+```bash
+PYTHONPATH=bot:. python bot/bot.py          # Linux/macOS
+$env:PYTHONPATH="bot;."; python bot/bot.py  # Windows PowerShell
+```
+
+**API:**
+
+```bash
+PYTHONPATH=. uvicorn api.main:app --reload          # Linux/macOS
+$env:PYTHONPATH="."; uvicorn api.main:app --reload  # Windows PowerShell
+# Docs at http://localhost:8000/docs
+```
+
+**Frontend:**
+
+```bash
+cd frontend
+npm install
+npm run dev
+# http://localhost:3000
+```
+
+The frontend reads the root `.env` automatically (via `next.config.ts`) — no separate `.env.local` needed.
 
 ---
 
 ## Environment Variables
 
-| Variable | Required for | Description |
+All variables live in a single `.env` file at the project root. Copy `.env.example` as a starting point.
+
+| Variable | Required | Description |
 |---|---|---|
-| `DISCORD_TOKEN` | Bot | Discord bot token |
-| `DISCORD_CLIENT_ID` | API | OAuth2 app client ID |
-| `DISCORD_CLIENT_SECRET` | API | OAuth2 app client secret |
-| `DISCORD_REDIRECT_URI` | API | Must match the redirect URI in your Discord app. Default: `http://localhost:8000/auth/callback` |
-| `JWT_SECRET` | API | Random secret for signing JWTs. Generate with: `openssl rand -hex 32` |
-| `FRONTEND_URL` | API | If set, the OAuth callback redirects to `<FRONTEND_URL>?token=<jwt>` instead of returning JSON |
-| `DB_PATH` | Both | Path to the SQLite file. Docker sets this to `/app/data/reminders.db` |
+| `DISCORD_TOKEN` | ✅ Bot | Discord bot token |
+| `DISCORD_CLIENT_ID` | ✅ API | OAuth2 app client ID |
+| `DISCORD_CLIENT_SECRET` | ✅ API | OAuth2 app client secret |
+| `DISCORD_REDIRECT_URI` | ✅ API | Redirect URI registered in Discord portal. Must match exactly. |
+| `JWT_SECRET` | ✅ API | Secret for signing JWTs. Generate: `openssl rand -hex 32` |
+| `NEXT_PUBLIC_API_URL` | ✅ Frontend | Public API URL used by the browser for the Discord login redirect (e.g. `http://192.168.0.6:8000`) |
+| `FRONTEND_URL` | ✅ API+Frontend | Public frontend URL. The API redirects here after OAuth. Also used by the frontend container to build absolute redirect URLs. |
+| `REDIS_URL` | ❌ | Redis connection string. Docker overrides this to `redis://redis:6379`. Local default: `redis://localhost:6379` |
+| `DB_PATH` | ❌ | SQLite file path. Docker sets this to `/app/data/reminders.db`. |
+
+> **Local vs Docker URLs:** When running with Docker on a local network, set `NEXT_PUBLIC_API_URL` and `FRONTEND_URL` to the machine's LAN IP (e.g. `http://192.168.0.6:8000`). `REDIS_URL` is automatically set to the internal Docker service name and does not need to be in `.env` for Docker deployments.
 
 ---
 
@@ -458,41 +430,78 @@ The database is stored in `./data/reminders.db` on the host (bind-mounted into b
 
 ```
 reminder-bot/
-├── bot/                        # Discord bot service
+├── bot/                         # Discord bot service
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   ├── bot.py                  # Entry point — bot setup, graceful shutdown
-│   ├── scheduler.py            # APScheduler — job scheduling, reminder firing, recovery
-│   ├── utils.py                # Date parsing, formatting helpers, timezone constants
+│   ├── bot.py                   # Entry point, graceful shutdown, Redis listener task
+│   ├── scheduler.py             # APScheduler jobs — fire, reschedule, recovery
+│   ├── redis_listener.py        # Subscribes to Redis, schedules jobs on API events
+│   ├── utils.py                 # Date parsing, formatting, timezone helpers
 │   ├── cogs/
-│   │   └── reminders.py        # Slash commands (/reminder, /reminders, /delete-reminder, /timezone)
+│   │   └── reminders.py         # Slash commands
 │   └── views/
-│       └── reminder_views.py   # Discord UI — modals, buttons, selects, embeds
-├── api/                        # REST API service
+│       └── reminder_views.py    # Discord UI — modals, selects, buttons
+│
+├── api/                         # REST API service
 │   ├── Dockerfile
 │   ├── requirements.txt
-│   ├── main.py                 # FastAPI app, CORS, lifespan
-│   ├── auth.py                 # Discord OAuth2 flow, JWT creation and verification
-│   ├── models.py               # Pydantic request/response schemas
+│   ├── main.py                  # FastAPI app, CORS, lifespan (DB + Redis init)
+│   ├── auth.py                  # Discord OAuth2 flow, JWT sign/verify
+│   ├── models.py                # Pydantic request/response schemas
+│   ├── redis_client.py          # Redis publisher with auto-reconnect
 │   └── routes/
-│       ├── reminders.py        # CRUD endpoints for reminders
-│       └── users.py            # User profile and timezone endpoints
+│       ├── reminders.py         # CRUD endpoints
+│       └── users.py             # Profile and timezone endpoints
+│
 ├── shared/
-│   └── database.py             # SQLite layer shared by both services
-├── data/                       # SQLite database volume (gitignored)
-├── docker-compose.yml
-└── .env.example
+│   └── database.py              # SQLite layer — shared by bot and API
+│
+├── frontend/                    # Web UI (Next.js 16, shadcn/ui, Tailwind v4)
+│   ├── Dockerfile
+│   ├── next.config.ts           # Standalone output, loads root .env in dev
+│   ├── proxy.ts                 # Route protection (Next.js 16 — replaces middleware.ts)
+│   ├── app/
+│   │   ├── layout.tsx
+│   │   ├── page.tsx             # Login page
+│   │   ├── dashboard/
+│   │   │   └── page.tsx         # Reminder list (Server Component)
+│   │   ├── auth/callback/
+│   │   │   └── route.ts         # Receives JWT from API, sets HttpOnly cookie
+│   │   ├── api/auth/logout/
+│   │   │   └── route.ts         # Clears session cookie
+│   │   └── actions.ts           # Server Actions (create, update, delete, toggle)
+│   ├── components/
+│   │   ├── reminders-shell.tsx  # Dashboard client shell, dialog state
+│   │   ├── reminder-card.tsx    # Single reminder card with actions
+│   │   ├── reminder-form.tsx    # Create/edit form — two-column layout
+│   │   ├── countdown.tsx        # Live countdown timer
+│   │   └── logout-button.tsx
+│   └── lib/
+│       ├── api.ts               # Typed API client (server-side, uses API_URL)
+│       └── session.ts           # HttpOnly cookie helpers (server-only)
+│
+├── data/                        # SQLite volume (gitignored)
+├── docker-compose.yml           # redis, bot, api, frontend
+├── .env.example
+└── .gitignore
 ```
-
-Both Docker images are built from the project root so they can share the `shared/` module. The bot sets `PYTHONPATH=/app/bot:/app` and the API sets `PYTHONPATH=/app`.
 
 ---
 
 ## Technical Notes
 
-- **Timezone handling** — user input is parsed in the user's timezone and stored as UTC ISO strings. Neither service reads the host system's timezone.
-- **Shared database** — both the bot and the API read/write the same SQLite file via a shared Docker volume. SQLite WAL mode (`PRAGMA journal_mode=WAL`) prevents corruption under concurrent access.
-- **Graceful shutdown** — the bot handles `SIGTERM` (Docker stop) and `SIGINT` (Ctrl-C) to shut down APScheduler and close the Discord connection before the process exits.
-- **Repeat drift prevention** — for daily and weekly reminders, the next occurrence always preserves the original scheduled time-of-day, even when recovering from a missed fire.
-- **Discord API errors** — `Forbidden` (DMs closed) and `NotFound` (deleted account) automatically deactivate the reminder.
-- **JWT expiry** — tokens are valid for 7 days. The API returns `401` on expired or tampered tokens.
+**Real-time sync via Redis pub/sub** — When a reminder is created, updated, or deleted through the API, a message is published to the `reminder:events` Redis channel. The bot subscribes to that channel and immediately schedules or cancels the corresponding APScheduler job. If Redis is unavailable, the API logs a warning but continues operating; the bot reconnects automatically with a 5-second retry loop.
+
+**SQLite shared between services** — Both the bot and API access the same SQLite file via a bind-mounted Docker volume. SQLite is configured with `PRAGMA journal_mode=WAL` and `PRAGMA synchronous=NORMAL` on every connection, which allows concurrent reads and protects against corruption if a process is killed mid-write. Field updates are applied atomically in a single transaction.
+
+**Session security** — JWTs are stored in `HttpOnly` cookies set server-side by Next.js. Client-side JavaScript never touches the token. The `Secure` flag is enabled automatically when `FRONTEND_URL` starts with `https://`.
+
+**Graceful shutdown** — The bot handles `SIGTERM` (sent by Docker on `docker stop`) and `SIGINT` (Ctrl-C). It cancels the Redis listener task, stops APScheduler, and closes the Discord connection cleanly before the process exits.
+
+**Missed reminders** — On startup the bot loads all active reminders from the database and reschedules them. Any reminder whose `next_run` is in the past fires within 10 seconds with a "delivered late" notice. Repeating reminders continue from the original schedule without drift.
+
+**Repeat drift prevention** — Daily and weekly reminders always preserve the original time-of-day, even after a missed fire or recovery. Monthly reminders clamp to the last valid day when the scheduled day doesn't exist in the target month (e.g. 31st → February).
+
+**Next.js 16 breaking change** — `middleware.ts` was renamed to `proxy.ts` in Next.js 16 and the exported function changed from `middleware` to `proxy`. The `proxy.ts` at the project root protects `/dashboard` and redirects unauthenticated requests to the login page.
+
+**PYTHONPATH** — The bot Dockerfile sets `PYTHONPATH=/app/bot:/app`, allowing `import scheduler` (from `bot/`) and `from shared import database` (from the project root) to work without package installation. The API Dockerfile sets `PYTHONPATH=/app` for the same reason.
