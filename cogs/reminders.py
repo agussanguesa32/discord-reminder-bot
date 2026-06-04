@@ -7,8 +7,8 @@ import pytz
 
 import database as db
 import scheduler as sched
-from utils import format_repeat, format_next_run, COMMON_TIMEZONES
-from views.reminder_views import CreateReminderModal, ReminderListView, ReminderDetailView
+from utils import format_repeat, format_next_run, next_run_utc, discord_ts, COMMON_TIMEZONES
+from views.reminder_views import QuickTimeView, ReminderListView, DeleteReminderView
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +30,13 @@ class RemindersCog(commands.Cog):
             )
             return
 
-        modal = CreateReminderModal(user_timezone=tz)
-        try:
-            await interaction.response.send_modal(modal)
-        except discord.HTTPException as e:
-            logger.error("Failed to send reminder modal for user %s: %s", interaction.user.id, e)
+        view = QuickTimeView(user_timezone=tz, user_id=interaction.user.id)
+        embed = discord.Embed(
+            title="⏰ New reminder — when?",
+            description="Pick a quick preset or choose a custom date and time.",
+            color=discord.Color.blurple(),
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     # ── /reminders ───────────────────────────────────────────────────────────
 
@@ -68,38 +70,37 @@ class RemindersCog(commands.Cog):
 
     # ── /delete-reminder ─────────────────────────────────────────────────────
 
-    @app_commands.command(name="delete-reminder", description="Delete a reminder by ID")
-    @app_commands.describe(id="Reminder ID (visible in /reminders)")
-    async def delete_reminder(self, interaction: discord.Interaction, id: int):
-        try:
-            reminder = db.get_reminder(id)
-        except Exception as e:
-            logger.error("DB error fetching reminder #%s for user %s: %s", id, interaction.user.id, e, exc_info=e)
-            await interaction.response.send_message(
-                "❌ Failed to fetch that reminder. Please try again.", ephemeral=True
-            )
-            return
-
-        if not reminder or str(reminder["user_id"]) != str(interaction.user.id):
-            await interaction.response.send_message(
-                "❌ Reminder not found or it doesn't belong to you.", ephemeral=True
-            )
-            return
+    @app_commands.command(name="delete-reminder", description="Delete one of your reminders")
+    async def delete_reminder(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
 
         try:
-            sched.remove_reminder_jobs(id)
-            db.delete_reminder(id, interaction.user.id)
+            reminders = db.get_user_reminders(interaction.user.id)
         except Exception as e:
-            logger.error("Error deleting reminder #%s for user %s: %s", id, interaction.user.id, e, exc_info=e)
-            await interaction.response.send_message(
-                "❌ Failed to delete the reminder. Please try again.", ephemeral=True
+            logger.error("DB error fetching reminders for user %s: %s", interaction.user.id, e, exc_info=e)
+            await interaction.followup.send(
+                "❌ Failed to load your reminders. Please try again.", ephemeral=True
             )
             return
 
-        logger.info("User %s deleted reminder #%s.", interaction.user.id, id)
-        await interaction.response.send_message(
-            f"✅ Reminder **#{id}** deleted.", ephemeral=True
+        if not reminders:
+            await interaction.followup.send(
+                embed=discord.Embed(
+                    title="📭 No reminders",
+                    description="You have no active reminders to delete.",
+                    color=discord.Color.greyple(),
+                ),
+                ephemeral=True,
+            )
+            return
+
+        view = DeleteReminderView(reminders, user_id=interaction.user.id)
+        embed = discord.Embed(
+            title="🗑️ Delete a reminder",
+            description="Select the reminder you want to delete, then confirm.",
+            color=discord.Color.red(),
         )
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     # ── /timezone ────────────────────────────────────────────────────────────
 
@@ -165,12 +166,12 @@ def _build_list_embed(reminders, user) -> discord.Embed:
         color=discord.Color.blue(),
     )
     for r in reminders[:10]:
-        next_run_str = format_next_run(r)
+        dt = next_run_utc(r)
         repeat_str = format_repeat(r)
         advance_str = f" · {r['advance_notice']} min notice" if r["advance_notice"] else ""
         embed.add_field(
             name=f"#{r['id']} — {r['title']}",
-            value=f"📅 {next_run_str}\n🔁 {repeat_str}{advance_str}",
+            value=f"📅 {discord_ts(dt, 'f')} ({discord_ts(dt, 'R')})\n🔁 {repeat_str}{advance_str}",
             inline=False,
         )
     if len(reminders) > 10:

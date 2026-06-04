@@ -7,7 +7,16 @@
       "Bash(\"venv/Scripts/python.exe\" -c \"import database; import utils; import scheduler; print\\('OK'\\)\")",
       "Bash(\"venv/Scripts/python.exe\" -c \"import discord; from cogs.reminders import *; from views.reminder_views import *; print\\('OK'\\)\")",
       "Bash(\"venv/Scripts/python.exe\" -c \"import scheduler; print\\('OK'\\)\")",
-      "Bash(venv/Scripts/python.exe -c ' *)"
+      "Bash(venv/Scripts/python.exe -c ' *)",
+      "WebSearch",
+      "Bash(\"venv/Scripts/python.exe\" -m py_compile bot.py database.py scheduler.py utils.py cogs/reminders.py views/reminder_views.py)",
+      "Bash(\"venv/Scripts/python.exe\" -c \"import database, utils, scheduler; from cogs.reminders import RemindersCog; from views.reminder_views import QuickTimeView, ReminderDetailsModal, CustomDateModal, TimePickerView, RepeatConfigView, WeeklyDayPickerView, IntervalModal, ReminderListView, ReminderDetailView, DeleteReminderView; print\\('Imports OK'\\)\")",
+      "Bash(\"venv/Scripts/python.exe\" -c \"from utils import parse_date, build_datetime, preset_dt, discord_ts; import pytz; from datetime import datetime; tz='America/Argentina/Buenos_Aires'; assert parse_date\\('25/06/2027',tz\\) is not None; assert parse_date\\('01/13/2027',tz\\) is None; d=parse_date\\('25/06/2027',tz\\); dt=build_datetime\\(d,14,30\\); assert dt.astimezone\\(pytz.timezone\\(tz\\)\\).hour==14; p=preset_dt\\(tz,1,9,0\\); assert p>datetime.now\\(pytz.utc\\); ts=discord_ts\\(p,'R'\\); assert ts.startswith\\('<t:'\\); print\\('utils OK'\\)\")",
+      "Bash(\"venv/Scripts/python.exe\" test_check.py)",
+      "Bash(\"venv/Scripts/python.exe\" -c \"print\\('direct exec'\\)\")",
+      "Bash(\"venv/Scripts/python.exe\" -c \"from utils import parse_date; print\\(parse_date\\('25/06/2027','America/Argentina/Buenos_Aires'\\)\\); print\\(parse_date\\('01/13/2027','America/Argentina/Buenos_Aires'\\)\\)\")",
+      "Bash(\"venv/Scripts/python.exe\" -c \"from cogs.reminders import RemindersCog; from views.reminder_views import QuickTimeView,ReminderDetailsModal,CustomDateModal,TimePickerView,RepeatConfigView,WeeklyDayPickerView,IntervalModal,ReminderListView,ReminderDetailView,DeleteReminderView; print\\('all classes OK'\\)\")",
+      "Bash(del *)"
     ]
   }
 }

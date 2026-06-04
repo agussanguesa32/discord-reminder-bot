@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 import discord
 import pytz
+from utils import discord_ts
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 
@@ -122,11 +123,7 @@ async def _fire_reminder(reminder_id: int, is_advance: bool = False):
         logger.error("HTTP error fetching user %s for reminder #%s: %s", reminder["user_id"], reminder_id, e)
         return
 
-    tz = pytz.timezone(reminder["timezone"])
     next_run_utc = datetime.fromisoformat(reminder["next_run"]).replace(tzinfo=pytz.utc)
-    next_run_local = next_run_utc.astimezone(tz)
-    tz_label = reminder["timezone"].split("/")[-1].replace("_", " ")
-
     now_utc = datetime.now(pytz.utc)
 
     if is_advance:
@@ -136,10 +133,9 @@ async def _fire_reminder(reminder_id: int, is_advance: bool = False):
         )
         embed.add_field(
             name="Scheduled for",
-            value=next_run_local.strftime("%m/%d/%Y %H:%M"),
+            value=f"{discord_ts(next_run_utc, 'f')}\n{discord_ts(next_run_utc, 'R')}",
             inline=True,
         )
-        embed.add_field(name="Timezone", value=tz_label, inline=True)
         if reminder["description"]:
             embed.add_field(name="Description", value=reminder["description"], inline=False)
         embed.set_footer(text=f"{reminder['advance_notice']} min advance notice · ID #{reminder_id}")
@@ -155,10 +151,9 @@ async def _fire_reminder(reminder_id: int, is_advance: bool = False):
             embed.add_field(name="Description", value=reminder["description"], inline=False)
         embed.add_field(
             name="Scheduled for",
-            value=next_run_local.strftime("%m/%d/%Y %H:%M"),
+            value=discord_ts(next_run_utc, 'f'),
             inline=True,
         )
-        embed.add_field(name="Timezone", value=tz_label, inline=True)
         embed.set_footer(text=f"ID #{reminder_id}")
 
     try:
