@@ -40,11 +40,11 @@ const INTERVAL_UNITS = ['minutes', 'hours', 'days', 'weeks']
 
 const NOTICE_OPTIONS = [
   { value: '0',   label: 'Off' },
-  { value: '5',   label: '5m' },
-  { value: '15',  label: '15m' },
-  { value: '30',  label: '30m' },
-  { value: '60',  label: '1h' },
-  { value: '120', label: '2h' },
+  { value: '5',   label: '5 min' },
+  { value: '15',  label: '15 min' },
+  { value: '30',  label: '30 min' },
+  { value: '60',  label: '1 hour' },
+  { value: '120', label: '2 hours' },
 ]
 
 export interface ReminderFormData {
@@ -103,7 +103,6 @@ export default function ReminderForm({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
-
     if (!title.trim()) return setError('Title is required.')
     if (!dateTime) return setError('Pick a date and time.')
     if (repeatType === 'weekly' && repeatDays.length === 0)
@@ -123,38 +122,38 @@ export default function ReminderForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
-      {/* Title */}
-      <div className="space-y-1.5">
-        <Label htmlFor="title">What do you need to remember?</Label>
-        <Input
-          id="title"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="e.g. Doctor appointment"
-          autoFocus
-        />
-      </div>
-
-      {/* Description */}
-      <div className="space-y-1.5">
-        <Label htmlFor="desc">
-          Details{' '}
-          <span className="font-normal text-muted-foreground">(optional)</span>
-        </Label>
-        <Textarea
-          id="desc"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Any extra details..."
-          rows={2}
-          className="resize-none"
-        />
+    <form onSubmit={handleSubmit} className="space-y-6 pt-1">
+      {/* Title + description */}
+      <div className="space-y-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="title">Title</Label>
+          <Input
+            id="title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Doctor appointment"
+            autoFocus
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="desc">
+            Description{' '}
+            <span className="font-normal text-muted-foreground text-xs">(optional)</span>
+          </Label>
+          <Textarea
+            id="desc"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Extra details..."
+            rows={2}
+            className="resize-none"
+          />
+        </div>
       </div>
 
       <Separator />
 
-      {/* Date & Time */}
+      {/* When */}
       <div className="space-y-2">
         <Label>When?</Label>
         <DateTimePicker value={dateTime} onChange={setDateTime} />
@@ -167,19 +166,21 @@ export default function ReminderForm({
         <Label>Repeat</Label>
         <ToggleGroup
           type="single"
+          variant="outline"
+          spacing={0}
           value={repeatType}
           onValueChange={(v) => { if (v) setRepeatType(v) }}
-          className="flex-wrap justify-start"
+          className="w-full"
         >
           {REPEAT_OPTIONS.map((o) => (
-            <ToggleGroupItem key={o.value} value={o.value} className="text-xs">
+            <ToggleGroupItem key={o.value} value={o.value} className="flex-1 text-xs">
               {o.label}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
 
         {repeatType === 'weekly' && (
-          <div className="flex flex-wrap gap-3 pt-1">
+          <div className="flex flex-wrap gap-x-4 gap-y-2 pt-1">
             {WEEKDAYS.map((d) => (
               <label
                 key={d.value}
@@ -197,16 +198,16 @@ export default function ReminderForm({
 
         {repeatType === 'interval' && (
           <div className="flex items-center gap-2 pt-1">
-            <span className="text-sm text-muted-foreground">Every</span>
+            <span className="text-sm text-muted-foreground shrink-0">Every</span>
             <Input
               type="number"
               min={1}
               value={repeatInterval}
               onChange={(e) => setRepeatInterval(Number(e.target.value))}
-              className="w-16"
+              className="w-20"
             />
             <Select value={repeatUnit} onValueChange={setRepeatUnit}>
-              <SelectTrigger className="w-28">
+              <SelectTrigger className="flex-1">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -226,22 +227,27 @@ export default function ReminderForm({
         <Label>Advance notice</Label>
         <ToggleGroup
           type="single"
+          variant="outline"
+          spacing={0}
           value={advanceNotice}
           onValueChange={(v) => { if (v) setAdvanceNotice(v) }}
+          className="w-full"
         >
           {NOTICE_OPTIONS.map((o) => (
-            <ToggleGroupItem key={o.value} value={o.value} className="text-xs">
+            <ToggleGroupItem key={o.value} value={o.value} className="flex-1 text-xs">
               {o.label}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
       </div>
 
-      {/* Error */}
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && (
+        <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error}
+        </p>
+      )}
 
-      {/* Actions */}
-      <div className="flex justify-end gap-2 pt-1">
+      <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onCancel} disabled={isPending}>
           Cancel
         </Button>

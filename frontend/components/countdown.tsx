@@ -3,18 +3,18 @@
 import { useEffect, useState } from 'react'
 
 function formatDiff(ms: number): string {
-  if (ms < 0) return 'overdue'
-  const totalSeconds = Math.floor(ms / 1000)
-  const days = Math.floor(totalSeconds / 86400)
-  const hours = Math.floor((totalSeconds % 86400) / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
-  const seconds = totalSeconds % 60
+  if (ms < 0) return 'Overdue'
+  const s = Math.floor(ms / 1000)
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
 
-  if (days > 0) return `in ${days}d ${hours}h`
-  if (hours > 0) return `in ${hours}h ${minutes}m`
-  if (minutes > 0) return `in ${minutes}m ${seconds}s`
-  if (totalSeconds > 0) return `in ${totalSeconds}s`
-  return 'now'
+  if (d > 0) return `in ${d}d ${h}h`
+  if (h > 0) return `in ${h}h ${m}m`
+  if (m > 0) return `in ${m}m ${sec}s`
+  if (s > 0) return `in ${s}s`
+  return 'Now'
 }
 
 export default function Countdown({ nextRun }: { nextRun: string }) {
@@ -28,17 +28,18 @@ export default function Countdown({ nextRun }: { nextRun: string }) {
     return () => clearInterval(id)
   }, [target])
 
-  const isOverdue = text === 'overdue'
-  const isSoon = !isOverdue && target - Date.now() < 3600000 // < 1h
+  const diff = target - Date.now()
+  const isOverdue = diff < 0
+  const isSoon = !isOverdue && diff < 3_600_000
 
   return (
     <span
       className={
         isOverdue
-          ? 'text-destructive font-medium'
+          ? 'text-sm font-semibold text-destructive'
           : isSoon
-            ? 'text-amber-400 font-medium'
-            : 'text-muted-foreground'
+            ? 'text-sm font-semibold text-amber-400'
+            : 'text-sm font-semibold text-foreground'
       }
     >
       {text}

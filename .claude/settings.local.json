@@ -52,7 +52,8 @@
       "Bash(npm list *)",
       "Bash(xargs -I {} basename {})",
       "Bash(git check-ignore *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(npx shadcn@latest add card --yes)"
     ]
   }
 }
