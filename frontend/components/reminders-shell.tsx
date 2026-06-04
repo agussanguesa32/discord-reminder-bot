@@ -103,7 +103,7 @@ export default function RemindersShell({ user, reminders }: Props) {
 
       {/* Create dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-md max-h-[92vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>New reminder</DialogTitle>
           </DialogHeader>

@@ -162,7 +162,7 @@ export default function ReminderCard({
       </AlertDialog>
 
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="max-w-md max-h-[92vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>Edit reminder</DialogTitle>
           </DialogHeader>
