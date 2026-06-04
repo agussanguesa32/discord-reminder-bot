@@ -217,11 +217,9 @@ class CustomDateModal(Modal, title="📅 Set date"):
             user_timezone=self.user_timezone,
             user_id=self.user_id,
         )
-        tz = pytz.timezone(self.user_timezone)
-        date_str = date_local.astimezone(tz).strftime("%d/%m/%Y")
         embed = discord.Embed(
             title="🕐 Pick a time",
-            description=f"**{self.r_title.value}** · {date_str}\n\nSelect the hour and minute, then confirm.",
+            description=f"**{self.r_title.value}** · {discord_ts(date_local, 'd')}\n\nSelect the hour and minute, then confirm.",
             color=discord.Color.blurple(),
         )
         await _safe_respond(interaction, embed=embed, view=view, ephemeral=True)
@@ -398,12 +396,15 @@ class AdvanceNoticeView(View):
             user_id=self.user_id,
         )
         embed = discord.Embed(
-            title="⚙️ Set repeat schedule",
+            title="⚙️ How often should this repeat?",
             description=(
                 f"**{self.r_title}**\n"
-                f"📅 {discord_ts(self.next_run, 'f')}  ·  {discord_ts(self.next_run, 'R')}\n"
-                + (f"⏰ {format_advance_notice(advance)}\n" if advance else "")
-                + "\nHow often should this reminder repeat?"
+                f"📅 First occurrence: {discord_ts(self.next_run, 'f')}  ({discord_ts(self.next_run, 'R')})\n"
+                + (f"⏰ Advance notice: {format_advance_notice(advance)}\n" if advance else "")
+                + "\n"
+                "**One time** — fires once, then it's done.\n"
+                "**Daily / Weekly / Monthly / Yearly** — repeats at the same time on that schedule.\n"
+                "**Custom interval** — every N hours / days / weeks."
             ),
             color=discord.Color.blurple(),
         )
@@ -443,15 +444,15 @@ class RepeatConfigView(View):
     async def on_timeout(self):
         logger.debug("RepeatConfigView timed out for user %s", self.user_id)
 
-    @discord.ui.button(label="No repeat",          style=discord.ButtonStyle.secondary, emoji="1️⃣", row=0)
-    async def no_repeat(self, interaction: discord.Interaction, button: Button):
+    @discord.ui.button(label="One time",           style=discord.ButtonStyle.secondary, emoji="🔕", row=0)
+    async def one_time(self, interaction: discord.Interaction, button: Button):
         await self._save_and_confirm(interaction, "none", 0, None, None)
 
-    @discord.ui.button(label="Daily",              style=discord.ButtonStyle.primary,   emoji="📆",  row=0)
+    @discord.ui.button(label="Daily",              style=discord.ButtonStyle.primary,   emoji="📆", row=0)
     async def daily(self, interaction: discord.Interaction, button: Button):
         await self._save_and_confirm(interaction, "daily", 1, "days", None)
 
-    @discord.ui.button(label="Weekly (pick days)", style=discord.ButtonStyle.primary,   emoji="📅",  row=0)
+    @discord.ui.button(label="Weekly",             style=discord.ButtonStyle.primary,   emoji="📅", row=0)
     async def weekly(self, interaction: discord.Interaction, button: Button):
         view = WeeklyDayPickerView(
             r_title=self.r_title, description=self.r_description,
@@ -460,7 +461,10 @@ class RepeatConfigView(View):
         )
         embed = discord.Embed(
             title="📅 Pick days of the week",
-            description="Select one or more days on which this reminder will repeat.",
+            description=(
+                f"First occurrence: {discord_ts(self.next_run, 'f')}\n\n"
+                "Select the weekdays on which this reminder will repeat **at the same time**."
+            ),
             color=discord.Color.blurple(),
         )
         try:
@@ -468,7 +472,15 @@ class RepeatConfigView(View):
         except discord.HTTPException as e:
             logger.error("Failed to show day picker for user %s: %s", interaction.user.id, e)
 
-    @discord.ui.button(label="Custom interval",    style=discord.ButtonStyle.success,   emoji="⏱️",  row=0)
+    @discord.ui.button(label="Monthly",            style=discord.ButtonStyle.primary,   emoji="🗓️", row=1)
+    async def monthly(self, interaction: discord.Interaction, button: Button):
+        await self._save_and_confirm(interaction, "monthly", 1, None, None)
+
+    @discord.ui.button(label="Yearly",             style=discord.ButtonStyle.primary,   emoji="🎯", row=1)
+    async def yearly(self, interaction: discord.Interaction, button: Button):
+        await self._save_and_confirm(interaction, "yearly", 1, None, None)
+
+    @discord.ui.button(label="Custom interval",    style=discord.ButtonStyle.success,   emoji="⏱️", row=1)
     async def custom_interval(self, interaction: discord.Interaction, button: Button):
         modal = IntervalModal(
             r_title=self.r_title, description=self.r_description,
@@ -585,7 +597,7 @@ class WeeklyDayPickerView(View):
 
 class IntervalModal(Modal, title="⏱️ Custom interval"):
     every = TextInput(label="Repeat every (number)", placeholder="e.g. 2", max_length=5)
-    unit  = TextInput(label="Unit: minutes / hours / days / weeks / months", placeholder="days", max_length=10)
+    unit  = TextInput(label="Unit: hours / days / weeks", placeholder="days", max_length=10)
 
     def __init__(self, r_title, description, next_run, advance, user_timezone, user_id):
         super().__init__()
@@ -606,8 +618,8 @@ class IntervalModal(Modal, title="⏱️ Custom interval"):
             return
 
         unit = self.unit.value.strip().lower()
-        if unit not in {"minutes", "hours", "days", "weeks", "months"}:
-            await _safe_respond(interaction, content="❌ Invalid unit. Use one of: `minutes, hours, days, weeks, months`", ephemeral=True)
+        if unit not in {"hours", "days", "weeks"}:
+            await _safe_respond(interaction, content="❌ Invalid unit. Use one of: `hours, days, weeks`", ephemeral=True)
             return
 
         try:

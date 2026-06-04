@@ -125,13 +125,17 @@ def format_advance_notice(minutes: int) -> str:
 def format_repeat(reminder) -> str:
     rt = reminder["repeat_type"]
     if rt == "none":
-        return "No repeat"
+        return "One time"
     if rt == "daily":
         return "Daily"
     if rt == "weekly":
         days = reminder["repeat_days"] or ""
         day_list = [DAY_LABELS.get(d.strip(), d) for d in days.split(",") if d.strip()]
         return "Weekly · " + ", ".join(day_list)
+    if rt == "monthly":
+        return "Monthly"
+    if rt == "yearly":
+        return "Yearly"
     if rt == "interval":
         unit = UNIT_LABELS.get(reminder["repeat_unit"], reminder["repeat_unit"])
         return f"Every {reminder['repeat_interval']} {unit}"

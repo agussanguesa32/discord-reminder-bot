@@ -171,7 +171,11 @@ def _build_list_embed(reminders, user) -> discord.Embed:
         advance_str = f" · {format_advance_notice(r['advance_notice'])}" if r["advance_notice"] else ""
         embed.add_field(
             name=f"#{r['id']} — {r['title']}",
-            value=f"📅 {discord_ts(dt, 'f')} ({discord_ts(dt, 'R')})\n🔁 {repeat_str}{advance_str}",
+            value=(
+                f"📅 {discord_ts(dt, 'f')}\n"
+                f"⏳ {discord_ts(dt, 'R')}\n"
+                f"🔁 {repeat_str}{advance_str}"
+            ),
             inline=False,
         )
     if len(reminders) > 10:

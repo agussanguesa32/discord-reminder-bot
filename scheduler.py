@@ -1,3 +1,4 @@
+import calendar
 import logging
 from datetime import datetime, timedelta
 
@@ -38,20 +39,21 @@ def _compute_next_run(reminder, from_dt: datetime) -> datetime | None:
     if repeat_type == "interval":
         unit = reminder["repeat_unit"]
         interval = reminder["repeat_interval"]
-        if unit == "minutes":
-            delta = timedelta(minutes=interval)
-        elif unit == "hours":
+        if unit == "hours":
             delta = timedelta(hours=interval)
         elif unit == "days":
             delta = timedelta(days=interval)
         elif unit == "weeks":
             delta = timedelta(weeks=interval)
-        elif unit == "months":
-            delta = timedelta(days=30 * interval)
         else:
             logger.error("Unknown repeat unit '%s' for reminder #%s", unit, reminder["id"])
             return None
         return from_dt + delta
+
+    if repeat_type == "daily":
+        next_dt = local_from + timedelta(days=1)
+        next_dt = next_dt.replace(hour=orig_hour, minute=orig_minute, second=0, microsecond=0)
+        return next_dt.astimezone(pytz.utc)
 
     if repeat_type == "weekly":
         days_str = reminder["repeat_days"] or ""
@@ -70,21 +72,36 @@ def _compute_next_run(reminder, from_dt: datetime) -> datetime | None:
         for wd in target_weekdays:
             diff = (wd - current_weekday) % 7
             if diff == 0:
-                diff = 7  # today already fired, skip to next week
+                diff = 7
             if best_diff is None or diff < best_diff:
                 best_diff = diff
 
         candidate = local_from + timedelta(days=best_diff)
-        candidate = candidate.replace(
-            hour=orig_hour, minute=orig_minute, second=0, microsecond=0,
-        )
+        candidate = candidate.replace(hour=orig_hour, minute=orig_minute, second=0, microsecond=0)
         return candidate.astimezone(pytz.utc)
 
-    if repeat_type == "daily":
-        next_dt = local_from + timedelta(days=1)
-        next_dt = next_dt.replace(
-            hour=orig_hour, minute=orig_minute, second=0, microsecond=0,
-        )
+    if repeat_type == "monthly":
+        # Advance exactly one month from the original scheduled date.
+        # If the original day doesn't exist in the target month (e.g. 31st → Feb),
+        # clamp to the last valid day.
+        year = original_local.year
+        month = original_local.month + 1
+        if month > 12:
+            month = 1
+            year += 1
+        day = min(original_local.day, calendar.monthrange(year, month)[1])
+        next_dt = original_local.replace(year=year, month=month, day=day, second=0, microsecond=0)
+        return next_dt.astimezone(pytz.utc)
+
+    if repeat_type == "yearly":
+        # Advance exactly one year from the original scheduled date.
+        # Handle Feb 29 on non-leap years by falling back to Feb 28.
+        year = original_local.year + 1
+        month = original_local.month
+        day = original_local.day
+        if month == 2 and day == 29 and not calendar.isleap(year):
+            day = 28
+        next_dt = original_local.replace(year=year, month=month, day=day, second=0, microsecond=0)
         return next_dt.astimezone(pytz.utc)
 
     logger.error("Unknown repeat_type '%s' for reminder #%s", repeat_type, reminder["id"])
