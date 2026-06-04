@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m venv venv)",
+      "Bash(venv\\\\Scripts\\\\pip install *)",
+      "Bash(\"venv/Scripts/pip.exe\" install *)",
+      "Bash(\"venv/Scripts/python.exe\" -c \"import database; import utils; import scheduler; print\\('OK'\\)\")",
+      "Bash(\"venv/Scripts/python.exe\" -c \"import discord; from cogs.reminders import *; from views.reminder_views import *; print\\('OK'\\)\")",
+      "Bash(\"venv/Scripts/python.exe\" -c \"import scheduler; print\\('OK'\\)\")",
+      "Bash(venv/Scripts/python.exe -c ' *)"
+    ]
+  }
+}
