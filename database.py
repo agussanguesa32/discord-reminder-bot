@@ -8,9 +8,16 @@ DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(__file__), "reminder
 DEFAULT_TZ = "America/Argentina/Buenos_Aires"
 
 
+def _ensure_db_dir():
+    """Create the directory that will hold the DB file if it doesn't exist yet."""
+    db_dir = os.path.dirname(os.path.abspath(DB_PATH))
+    os.makedirs(db_dir, exist_ok=True)
+
+
 @contextlib.contextmanager
 def _get_db():
     """Context manager that always closes the connection and rolls back on error."""
+    _ensure_db_dir()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     # WAL mode persists on the file — safe to set on every connection.
