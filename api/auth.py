@@ -1,6 +1,8 @@
 import os
+import logging
 import httpx
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -8,6 +10,7 @@ from jose import JWTError, jwt
 
 router = APIRouter()
 security = HTTPBearer()
+logger = logging.getLogger(__name__)
 
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
@@ -45,12 +48,12 @@ async def get_current_user(
 
 @router.get("/login")
 def login():
-    params = (
-        f"client_id={DISCORD_CLIENT_ID}"
-        f"&redirect_uri={DISCORD_REDIRECT_URI}"
-        f"&response_type=code"
-        f"&scope=identify"
-    )
+    params = urlencode({
+        "client_id": DISCORD_CLIENT_ID,
+        "redirect_uri": DISCORD_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "identify",
+    })
     return RedirectResponse(f"{DISCORD_OAUTH_URL}?{params}")
 
 
@@ -69,7 +72,8 @@ async def callback(code: str):
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         if token_resp.status_code != 200:
-            raise HTTPException(status_code=400, detail="Error al intercambiar el código de Discord")
+            logger.error("Discord token exchange failed: %s %s", token_resp.status_code, token_resp.text)
+            raise HTTPException(status_code=400, detail=f"Discord error: {token_resp.text}")
 
         discord_token = token_resp.json()["access_token"]
 
@@ -78,6 +82,7 @@ async def callback(code: str):
             headers={"Authorization": f"Bearer {discord_token}"},
         )
         if user_resp.status_code != 200:
+            logger.error("Discord user fetch failed: %s %s", user_resp.status_code, user_resp.text)
             raise HTTPException(status_code=400, detail="Error al obtener el usuario de Discord")
 
         discord_user = user_resp.json()

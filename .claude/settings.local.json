@@ -51,7 +51,8 @@
       "Bash(Select-Object FullName)",
       "Bash(npm list *)",
       "Bash(xargs -I {} basename {})",
-      "Bash(git check-ignore *)"
+      "Bash(git check-ignore *)",
+      "Bash(git add *)"
     ]
   }
 }
