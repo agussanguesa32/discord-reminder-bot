@@ -5,7 +5,7 @@ import discord
 from discord.ui import Modal, TextInput, View, Button, Select
 import pytz
 
-import database as db
+from shared import database as db
 import scheduler as sched
 from utils import (
     parse_date, build_datetime, preset_dt,

@@ -8,7 +8,7 @@ from utils import discord_ts, format_advance_notice
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 
-import database as db
+from shared import database as db
 
 logger = logging.getLogger(__name__)
 

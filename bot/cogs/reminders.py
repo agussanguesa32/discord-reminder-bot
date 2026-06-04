@@ -5,7 +5,7 @@ from discord.ext import commands
 from discord import app_commands
 import pytz
 
-import database as db
+from shared import database as db
 import scheduler as sched
 from utils import format_repeat, format_next_run, format_advance_notice, next_run_utc, discord_ts, COMMON_TIMEZONES
 from views.reminder_views import QuickTimeView, ReminderListView, DeleteReminderView

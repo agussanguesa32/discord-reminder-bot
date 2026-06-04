@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-import database as db
+from shared import database as db
 import scheduler as sched
 
 load_dotenv()

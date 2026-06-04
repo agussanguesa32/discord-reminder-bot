@@ -1,6 +1,8 @@
 services:
-  reminder-bot:
-    build: .
+  bot:
+    build:
+      context: .
+      dockerfile: bot/Dockerfile
     env_file: .env
     environment:
       DB_PATH: /app/data/reminders.db
@@ -8,3 +10,30 @@ services:
       - ./data:/app/data
     restart: unless-stopped
     stop_grace_period: 30s
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    env_file: .env
+    environment:
+      DB_PATH: /app/data/reminders.db
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped

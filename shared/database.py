@@ -3,7 +3,8 @@ import os
 import contextlib
 from datetime import datetime, timezone as dt_timezone
 
-DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(__file__), "reminders.db"))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.getenv("DB_PATH", os.path.join(_PROJECT_ROOT, "data", "reminders.db"))
 
 DEFAULT_TZ = "America/Argentina/Buenos_Aires"
 
